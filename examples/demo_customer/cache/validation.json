@@ -1,0 +1,13 @@
+{"tests": [
+ {"id":"TC1","title":"Paid order creates exactly one shipment","covers":["R1"],"expected":"One shipment, ledger row recorded"},
+ {"id":"TC2","title":"Duplicate webhook is ignored","covers":["R1"],"expected":"No second shipment"},
+ {"id":"TC3","title":"Tracking number patches order status","covers":["R2"],"expected":"Order status updated"},
+ {"id":"TC4","title":"Burst of 500 orders is queued without loss","covers":["R3"],"expected":"All 500 delivered eventually"},
+ {"id":"TC5","title":"Fulfillment outage leads to retry then dead-letter","covers":["R1"],"expected":"Alert raised, no data loss"}
+],
+"risks": [
+ {"id":"K1","title":"Fulfillment API contract unknown","severity":"high","mitigation":"Resolve Q1 and obtain API docs before build"},
+ {"id":"K2","title":"Status enum mapping unconfirmed","severity":"medium","mitigation":"Agree enum table with fulfillment team"},
+ {"id":"K3","title":"Peak throughput not quantified","severity":"medium","mitigation":"Load test once Q2 is answered"}
+],
+"decisions":[{"agent":"validation","decision":"Covered every requirement with at least one test","rationale":"R4 is unknown so is tracked as risk K1"}]}

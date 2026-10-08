@@ -1,0 +1,7 @@
+{"requirements": [
+ {"id":"R1","text":"Paid orders from the order platform are created as shipments in the fulfillment system","kind":"functional","provenance":"fact","source":"brief"},
+ {"id":"R2","text":"Customers see tracking updates after shipment","kind":"functional","provenance":"fact","source":"brief"},
+ {"id":"R3","text":"Handle promotion traffic spikes without dropping orders","kind":"non-functional","provenance":"assumption","source":"brief"},
+ {"id":"R4","text":"Fulfillment system API contract","kind":"functional","provenance":"unknown"}
+],
+"decisions":[{"agent":"requirements","decision":"Marked fulfillment API contract as unknown","rationale":"Only a sample export was supplied, no API docs"}]}

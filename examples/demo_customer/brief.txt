@@ -1,0 +1,5 @@
+Northwind Outfitters sells outdoor gear online through their order platform.
+We need to connect our order platform to our internal fulfillment system so paid orders
+are shipped automatically and customers see tracking updates. Orders arrive all day with
+spikes around promotions. We have an OpenAPI spec for the order platform and one sample
+export from the fulfillment system.

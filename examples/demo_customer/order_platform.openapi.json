@@ -1,0 +1,12 @@
+{
+  "openapi": "3.0.3",
+  "info": {"title": "Northwind Order Platform", "version": "1.2.0"},
+  "components": {"securitySchemes": {"bearer": {"type": "http", "scheme": "bearer"}}},
+  "paths": {
+    "/orders": {"get": {"summary": "List orders"}, "post": {"summary": "Create order"}},
+    "/orders/{id}": {"get": {"summary": "Get order"}},
+    "/orders/{id}/status": {"patch": {"summary": "Update order status"}},
+    "/webhooks/order-paid": {"post": {"summary": "Order paid webhook"}}
+  },
+  "x-order-fields": ["order_id", "customer_email", "total_amount", "currency", "shipping_address", "line_items", "status"]
+}

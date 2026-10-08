@@ -1,0 +1,8 @@
+{
+  "shipment_ref": "FUL-20931",
+  "recipient_email": "ana@example.com",
+  "ship_to": "12 Pine St, Portland, OR",
+  "items": [{"sku": "TENT-2P", "qty": 1}],
+  "state": "PICKING",
+  "tracking_no": null
+}

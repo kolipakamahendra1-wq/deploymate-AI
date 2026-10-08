@@ -1,0 +1,9 @@
+{"mappings": [
+ {"source_field":"order_id","target_field":"shipment_ref","confidence":0.55,"provenance":"assumption","transform":"prefix FUL-"},
+ {"source_field":"customer_email","target_field":"recipient_email","confidence":0.95,"provenance":"fact","source":"sample:fulfillment_sample.json","transform":"copy"},
+ {"source_field":"shipping_address","target_field":"ship_to","confidence":0.8,"provenance":"fact","source":"sample:fulfillment_sample.json","transform":"flatten to one line"},
+ {"source_field":"line_items","target_field":"items","confidence":0.7,"provenance":"assumption","transform":"map sku and qty"},
+ {"source_field":"status","target_field":"state","confidence":0.4,"provenance":"assumption","transform":"enum mapping needed"},
+ {"source_field":"total_amount","target_field":"?","confidence":0.1,"provenance":"unknown"}
+],
+"decisions":[{"agent":"integration","decision":"Mapped 5 fields, left total_amount unmapped","rationale":"No matching fulfillment field in sample"}]}

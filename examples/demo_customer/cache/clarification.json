@@ -1,0 +1,8 @@
+{"questions": [
+ {"id":"Q1","text":"How does the fulfillment system authenticate API clients?","category":"auth","priority":"high"},
+ {"id":"Q2","text":"What peak orders per minute must be supported during promotions?","category":"throughput","priority":"high"},
+ {"id":"Q3","text":"What is the SLA from payment to shipment creation?","category":"sla","priority":"medium"},
+ {"id":"Q4","text":"Which system owns the shipping address after the order is paid?","category":"data-ownership","priority":"medium"},
+ {"id":"Q5","text":"What should happen when the fulfillment system is down or rejects a shipment?","category":"failure","priority":"high"}
+],
+"decisions":[{"agent":"clarification","decision":"Raised 5 questions covering auth, throughput, SLA, ownership, failure","rationale":"These gaps block integration design"}]}
