@@ -104,6 +104,8 @@ The evaluation scores the offline agents on 40 synthetic cases (10 integration d
 | Critic accuracy on planted violations | 100% |
 | Human reviewer score | not measured |
 
+**Live model (Ollama, qwen2.5:3b, 5 sampled cases, guardrails on):** requirement precision 38%, requirement recall 53%, missing-question recall 100%, mapping accuracy 65%, architecture validity 100%, test coverage 100%, pattern top-1 20%. Run with `LLM_PROVIDER=ollama python -m backend.evaluation.run_eval --live --limit 5`. The perfect validity, coverage and question-recall scores come from the guardrails filling the model's gaps, not from the model itself. A 3B model is weaker than the rule-based agents at extraction and mapping. A larger model (for example `qwen2.5:7b`) should do better, but has not been measured.
+
 Read these with care: the synthetic cases were written alongside the offline agents, so the 100% scores are optimistic for real briefs. Pattern retrieval is the honest weak spot. Briefs that do not say how data should flow are genuinely ambiguous, and the decision log flags those as weak matches.
 
 CI runs the tests and the evaluation (failing on guardrail regressions), builds the frontend, then starts the full compose stack and smoke-tests it through nginx.
@@ -112,4 +114,4 @@ CI runs the tests and the evaluation (failing on guardrail regressions), builds 
 
 - **Ollama in the cloud.** The Railway deploy runs the offline agents; adding Ollama there needs a plan with about 3 GB RAM for the service (see Cloud deployment).
 - **21st.dev components.** The 21st.dev MCP server was not connected, so the UI uses hand-built primitives re-themed to the PRD tokens (the PRD's fallback in section 10.4). They can be swapped for catalog components once `API_KEY_21ST` is set.
-- **Live-model quality.** The free-model path is implemented and schema-validated, but it has not been evaluated against a real key.
+- **Live-model quality.** Only 5 cases have been run against Ollama (qwen2.5:3b); see the live results above.
