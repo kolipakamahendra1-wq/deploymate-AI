@@ -1,59 +1,89 @@
 # DeployMate AI
 
-An AI implementation copilot for forward-deployed engineers. It turns a customer brief, an OpenAPI spec and sample data into requirements, open questions, a data mapping, an architecture, an implementation plan, a test plan, a risk register and a customer handoff document. A 3D system graph fills in as each agent stage completes.
-
-This repository is the **vertical demo slice** of the PRD (`PRD.2.md`): one fictional customer (Northwind Outfitters, order platform to fulfillment system), every layer working end to end.
+An AI implementation copilot for forward-deployed engineers. Give it a customer brief, an OpenAPI spec and sample data, and it produces requirements, open questions, a field mapping, an architecture, an implementation plan, a test plan, a risk register and a customer handoff document. Every claim is marked as a **fact**, an **assumption** or **unknown**, so nothing invented reaches the customer looking like a fact.
 
 ## Run it
 
+**Everything in Docker** (PostgreSQL with pgvector, the API, the built frontend):
+
 ```bash
-# backend (Python 3.12+)
-python -m venv .venv
-.venv/Scripts/activate        # Windows; use .venv/bin/activate on macOS/Linux
+docker compose up --build        # http://localhost:8080
+```
+
+**Local development:**
+
+```bash
+python -m venv .venv && .venv/Scripts/activate      # macOS/Linux: source .venv/bin/activate
 pip install -r requirements.txt
-uvicorn backend.api.main:app --port 8000
+uvicorn backend.api.main:app --port 8000 --reload   # SQLite by default
 
-# frontend (Node 22)
-cd frontend
-npm install
-npm run dev                   # http://localhost:5173
+cd frontend && npm install && npm run dev            # http://localhost:5173
 ```
 
-In the app: **New Customer → Load demo customer → Next → Next → Create customer**, then **Run pipeline** on Discovery. Every other page fills in from that run.
+In the app: **New Customer → Load demo customer** (or paste your own brief and attach a JSON/YAML OpenAPI spec and a JSON/CSV sample) → **Create customer** → **Run pipeline**. Press **Ctrl K** anywhere for the command palette.
 
-## LLM: free model, offline by default
+## How the agents get their answers
 
-The agents call any OpenAI-compatible endpoint. The default is a free model on OpenRouter.
+Each of the seven agents tries three sources in order:
 
-| Variable | Default |
+1. **Live:** a free hosted model through any OpenAI-compatible endpoint (default: OpenRouter), when `LLM_API_KEY` is set. Output is validated against the agent's Pydantic schema; invalid output falls through.
+2. **Recorded:** curated outputs for the built-in demo customer only. A customer whose inputs differ in any way never sees them.
+3. **Offline:** rule-based agents (`backend/agents/heuristics.py`) that work for any customer with no key.
+
+Whatever the source, systems and endpoints come only from the supplied inputs, never from a model. The critic then checks everything against the inputs.
+
+| Variable | Purpose |
 |---|---|
-| `LLM_API_KEY` | empty, which replays cached outputs from `examples/demo_customer/cache/` |
-| `LLM_BASE_URL` | `https://openrouter.ai/api/v1` |
-| `LLM_MODEL` | `meta-llama/llama-3.3-70b-instruct:free` |
+| `LLM_API_KEY`, `LLM_BASE_URL`, `LLM_MODEL` | Free model access; empty key means offline agents |
+| `DATABASE_URL` | SQLite by default; Postgres in compose |
+| `POSTGRES_PASSWORD` | Compose database password (a local-only default is used if unset) |
+| `CORS_ORIGINS` | Origins allowed to call the API directly |
 
-Copy `.env.example` to `.env` and set the variables in your shell. If a live call fails, the agent falls back to the cache, so the demo always runs. The sidebar shows which mode is active.
-
-## How it works
+## Architecture
 
 ```
-brief ─► Requirements ─► Clarification ─► Integration ─► Architecture ─► Validation ─► Critic ─► Handoff
-                     (LangGraph, shared Pydantic PipelineState)
+brief + spec + sample
+  └─► Requirements ─► Clarification ─► Integration ─► Architecture ─► Validation ─► Critic ─► Handoff
+                     (LangGraph; agents share one Pydantic PipelineState)
 ```
 
-- `backend/schemas/models.py` holds the shared state. Every claim carries `provenance: fact | assumption | unknown`, and a `fact` without a `source` fails validation.
-- `backend/integrations/parsers.py` parses the OpenAPI spec and sample JSON deterministically. Only endpoints found there become facts.
-- `backend/agents/stages.py` has the seven agents. The critic is rule-based: it flags invented endpoints, unsourced mapping facts, broken task dependencies and untested requirements.
-- `backend/api/` is FastAPI with SQLite storage. Every read and write is scoped by `customer_id`, `POST /customers/{id}/run` streams stage progress as server-sent events, and the handoff needs `POST /customers/{id}/handoff/approve` before it is marked approved.
-- Every agent appends to a decision log, which is shown on the Handoff page.
-- `frontend/` is Vite, React, TypeScript and Tailwind v4, with the PRD design tokens in `src/index.css`. The 3D scene is React Three Fiber, lazy-loaded. With `prefers-reduced-motion` it switches to a static 2D diagram, and a list view is available as well.
+| Path | What it holds |
+|---|---|
+| `backend/schemas/models.py` | Shared state. A `fact` without a `source` fails validation |
+| `backend/integrations/parsers.py` | OpenAPI (JSON/YAML, `$ref`-aware) and sample (JSON/CSV) parsing |
+| `backend/integrations/patterns.py` | Integration-pattern library with a vector index: pgvector cosine search on Postgres, in-process on SQLite. Holds no customer data |
+| `backend/agents/` | The seven agents, the fallback chain and the offline heuristics |
+| `backend/api/` | FastAPI. Every query is scoped by `customer_id`; pipeline progress streams as server-sent events; an append-only `decision_log` table keeps every decision across runs; the handoff needs explicit human approval |
+| `backend/evaluation/` | 40 synthetic cases and the metrics below |
+| `frontend/` | React, TypeScript, Tailwind v4 with the PRD design tokens. Four lazy-loaded React Three Fiber scenes (system graph, pipeline in depth with GSAP camera moves, layered architecture with security-boundary volumes, field-mapping columns). Each scene has a list view and a static 2D fallback under `prefers-reduced-motion` |
+| `infrastructure/` | Dockerfiles and the nginx config |
 
 ## Tests and evaluation
 
 ```bash
 python -m pytest -q
-python -m backend.evaluation.run_eval   # writes generated/eval_report.json
+python -m backend.evaluation.run_eval     # writes generated/eval_report.json; also on the Evaluation page
 ```
 
-## Not in this slice
+The evaluation scores the offline agents on 40 synthetic cases (10 integration domains × 4 brief variants):
 
-These are the next sub-projects: the pipeline, architecture and mapping 3D scenes, the 30–50 case evaluation set, Postgres with pgvector, Docker and cloud deploy, and installing 21st.dev catalog components (the UI uses hand-built primitives that can be swapped for catalog components later, as PRD 10.4 allows).
+| Metric | Score |
+|---|---|
+| Requirement extraction precision / recall | 100% / 100% |
+| Missing-question recall | 100% |
+| Mapping accuracy | 100% |
+| Architecture validity | 100% |
+| Test-case coverage | 100% |
+| Pattern retrieval, top-1 | 47.5% |
+| Critic accuracy on planted violations | 100% |
+| Human reviewer score | not measured |
+
+Read these with care: the synthetic cases were written alongside the offline agents, so the 100% scores are optimistic for real briefs. Pattern retrieval is the honest weak spot. Briefs that do not say how data should flow are genuinely ambiguous, and the decision log flags those as weak matches.
+
+CI runs the tests and the evaluation (failing on guardrail regressions), builds the frontend, then starts the full compose stack and smoke-tests it through nginx.
+
+## Not done yet
+
+- **Cloud deploy.** The compose stack is ready for any container host, but nothing has been deployed: that needs your cloud account.
+- **21st.dev components.** The 21st.dev MCP server was not connected, so the UI uses hand-built primitives re-themed to the PRD tokens (the PRD's fallback in section 10.4). They can be swapped for catalog components once `API_KEY_21ST` is set.
+- **Live-model quality.** The free-model path is implemented and schema-validated, but it has not been evaluated against a real key.

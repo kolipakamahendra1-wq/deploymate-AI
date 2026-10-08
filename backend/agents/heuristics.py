@@ -28,6 +28,8 @@ _VENDORS = [
 ]
 _DROP = {"internal", "existing", "legacy", "new", "current", "own", "main", "central", "in-house", "whole"}
 _GENERIC = {"system", "platform", "service", "app", "application", "api", "tool", "backend"}
+# A lone common noun ("the ledger", "a store") is not a named system; acronyms like CRM/ERP are.
+_LONE_NOUNS = _GENERIC | {"ledger", "store", "shop", "database", "warehouse", "portal"}
 
 
 def slug(name: str) -> str:
@@ -38,8 +40,8 @@ def detect_system_names(brief: str) -> list[str]:
     found: list[tuple[int, str]] = []
     for m in _SYSTEM_RE.finditer(brief):
         words = [w for w in m.group(1).split() if w.lower() not in _DROP]
-        if len(words) < 2 and words and words[0].lower() in _GENERIC:
-            continue  # "the system" alone names nothing
+        if len(words) < 2 and words and words[0].lower() in _LONE_NOUNS:
+            continue  # "the system" or "the ledger" alone names nothing
         if words:
             found.append((m.start(), " ".join(w.capitalize() if w.islower() else w for w in words)))
     for v in _VENDORS:

@@ -1,12 +1,19 @@
+import { lazy, Suspense } from "react";
 import { useApp } from "../store";
 import { Empty, Mono, PageTitle, Panel, ProvBadge } from "../components/ui/primitives";
+
+const MappingScene = lazy(() => import("../scenes/MappingScene"));
 
 export default function DataMapping() {
   const { data } = useApp();
   if (!data.mapping.length) return <><PageTitle title="Data mapping" /><Empty what="mappings" /></>;
+  const [src, tgt] = [data.systems[0]?.name ?? "Source", data.systems[1]?.name ?? "Target"];
   return (
     <>
-      <PageTitle title="Data mapping" hint="Order platform field to fulfillment field. Low confidence rows need a human decision." />
+      <PageTitle title="Data mapping" hint={`${src} field to ${tgt} field. Only identical field names are facts; everything else needs customer sign-off.`} />
+      <div className="mb-6">
+        <Suspense fallback={<p className="p-6 text-ink-soft">Loading 3D scene…</p>}><MappingScene mapping={data.mapping} /></Suspense>
+      </div>
       <Panel className="overflow-x-auto p-0">
         <table className="w-full text-left text-sm">
           <caption className="sr-only">Field mappings with confidence</caption>
@@ -22,7 +29,8 @@ export default function DataMapping() {
           <tbody>
             {data.mapping.map((m) => {
               const pct = Math.round(m.confidence * 100);
-              const color = pct >= 80 ? "bg-fact" : pct >= 50 ? "bg-assume" : "bg-unknown";
+              // Colour carries provenance everywhere: a confident inference is still amber, not teal.
+              const color = m.provenance === "fact" ? "bg-fact" : m.provenance === "assumption" ? "bg-assume" : "bg-unknown";
               return (
                 <tr key={m.source_field} className={`border-b border-line last:border-0 ${m.provenance === "unknown" ? "hatched" : ""}`}>
                   <td className="p-3"><Mono>{m.source_field}</Mono></td>

@@ -102,6 +102,8 @@ def test_field_mapping_uses_synonyms():
 
 def test_system_detection():
     assert h.detect_system_names("Sync our Shopify store with the NetSuite ERP.") == ["Shopify Store", "NetSuite ERP"]
+    # "the ledger" is an accounting concept here, not a third system
+    assert h.detect_system_names("Sync our CRM with our billing system so sales are booked in the ledger.") == ["CRM", "Billing System"]
 
 
 def test_pattern_retrieval():

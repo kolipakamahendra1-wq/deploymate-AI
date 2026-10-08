@@ -13,6 +13,7 @@ import Plan from "./pages/Plan";
 import Risks from "./pages/Risks";
 import Validation from "./pages/Validation";
 import Handoff from "./pages/Handoff";
+import Evaluation from "./pages/Evaluation";
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
@@ -29,6 +30,7 @@ createRoot(document.getElementById("root")!).render(
             <Route path="risks" element={<Risks />} />
             <Route path="validation" element={<Validation />} />
             <Route path="handoff" element={<Handoff />} />
+            <Route path="evaluation" element={<Evaluation />} />
           </Route>
         </Routes>
       </BrowserRouter>

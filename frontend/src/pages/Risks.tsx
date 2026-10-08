@@ -42,7 +42,7 @@ export default function Risks() {
       </Panel>
       <Panel>
         <h2 className="mb-2 text-xl font-semibold">Critic findings</h2>
-        {data.critic.length === 0 ? <p className="text-fact">The critic found no guardrail violations.</p> : (
+        {data.critic.length === 0 ? <p className="text-[#08665c]">The critic found no guardrail violations.</p> : (
           <ul className="space-y-2">{data.critic.map((n, i) => <li key={i} className="flex items-center gap-2 text-sm"><SeverityTag s={n.severity} />{n.message}</li>)}</ul>
         )}
       </Panel>
