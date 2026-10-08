@@ -14,5 +14,5 @@ USER app
 EXPOSE 8000
 HEALTHCHECK --interval=10s --timeout=3s --retries=5 \
   CMD python -c "import os, urllib.request; urllib.request.urlopen(f'http://localhost:{os.environ[\"PORT\"]}/health')"
-# Bind to IPv6 and IPv4 so private networks of either kind can reach the API.
-CMD ["sh", "-c", "uvicorn backend.api.main:app --host :: --port ${PORT}"]
+# One dual-stack socket so IPv4 health checks and IPv6 private networks both reach the API.
+CMD ["python", "-m", "backend.serve"]
