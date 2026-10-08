@@ -10,7 +10,7 @@ from fastapi.responses import PlainTextResponse, StreamingResponse
 from pydantic import BaseModel
 
 from ..agents.graph import STAGE_NAMES, run_pipeline
-from ..agents.llm import live_enabled
+from ..agents.llm import live_enabled, model_name, provider
 from ..integrations.parsers import load_openapi, load_sample
 from ..integrations.patterns import PATTERNS
 from ..schemas.models import PipelineState
@@ -60,7 +60,8 @@ def _demo() -> dict:
 
 @app.get("/health")
 def health():
-    return {"ok": True, "llm": "live" if live_enabled() else "offline", "stages": STAGE_NAMES}
+    return {"ok": True, "llm": "live" if live_enabled() else "offline", "provider": provider(),
+            "model": model_name(), "stages": STAGE_NAMES}
 
 
 @app.get("/demo")

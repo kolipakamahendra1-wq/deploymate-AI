@@ -6,6 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 os.environ.pop("LLM_API_KEY", None)
+os.environ.pop("LLM_PROVIDER", None)
 os.environ["DATABASE_URL"] = "sqlite:///:memory:"
 
 from backend.agents import heuristics as h  # noqa: E402

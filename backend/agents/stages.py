@@ -16,6 +16,37 @@ GUARD = (
     "Never invent customer APIs or fields. Anything not in the supplied brief, spec or "
     "sample must have provenance 'unknown' or 'assumption'. A 'fact' must cite a source."
 )
+ROLE = "You are an implementation engineer turning a customer's integration brief into a delivery plan."
+
+PROMPTS = {
+    "requirements": (
+        f"{ROLE} List the requirements. Use ids R1, R2, ... Use kind 'functional' for what the integration "
+        "must do and 'non-functional' for volume, latency, security, availability or delivery-mode constraints. "
+        "Set provenance 'fact' with source 'brief' only for statements made in the brief; inferred needs are "
+        "'assumption'. Add one 'unknown' requirement for each system whose API is not documented. " + GUARD
+    ),
+    "clarification": (
+        f"{ROLE} List questions the customer must answer before build. Use ids Q1, Q2, ... Ask only about gaps "
+        "the material does not answer: auth, throughput, sla, data-ownership, failure (category 'other' for "
+        "anything else, such as real-time versus batch or privacy rules). Priority high, medium or low."
+    ),
+    "integration": (
+        f"{ROLE} Map each source field to the best target field. Use target_field '?' with provenance "
+        "'unknown' and confidence 0 when nothing matches. Provenance 'fact' (source 'spec+sample') only when "
+        "the two field names are identical; otherwise 'assumption'. Confidence is between 0 and 1. "
+        "Describe any conversion in transform. " + GUARD
+    ),
+    "architecture": (
+        f"{ROLE} Design the integration architecture: components with short ids and a layer of client, api, "
+        "integration or data; each customer system is a client-layer component named exactly as given; flows "
+        "between component ids; security boundaries listing component ids. Then an implementation plan of "
+        "tasks T1, T2, ... with depends_on ids and estimate_days. " + GUARD
+    ),
+    "validation": (
+        f"{ROLE} Write test cases TC1, TC2, ... so that every requirement id is listed in some test's covers, "
+        "with an expected result. Then a risk register K1, K2, ... with severity high, medium or low and a mitigation."
+    ),
+}
 
 
 class RequirementsOut(BaseModel):
@@ -63,7 +94,7 @@ def _context(state: PipelineState) -> str:
 def requirements_agent(state: PipelineState) -> dict:
     systems = h.build_systems(state)
     out, mode = run_agent(
-        "requirements", f"Extract functional and non-functional requirements. {GUARD}", _context(state),
+        "requirements", PROMPTS["requirements"], _context(state),
         RequirementsOut, state.fixture,
         lambda: RequirementsOut(requirements=h.extract_requirements(state, systems), decisions=[
             Decision(agent="requirements", decision="Extracted requirements from need statements and NFR cues",
@@ -76,14 +107,22 @@ def requirements_agent(state: PipelineState) -> dict:
 def clarification_agent(state: PipelineState) -> dict:
     systems = h.build_systems(state)
     out, mode = run_agent(
-        "clarification",
-        "List the questions the customer must answer: auth, throughput, SLA, data ownership, failure behaviour.",
+        "clarification", PROMPTS["clarification"],
         _context(state), ClarificationOut, state.fixture,
         lambda: ClarificationOut(questions=h.detect_questions(state, systems), decisions=[
             Decision(agent="clarification", decision="Checked brief and materials for each gap category",
                      rationale="A question is raised only when the material does not already answer it")]),
     )
-    return {"questions": out.questions, "decisions": _log(state, out, "clarification", mode),
+    questions, extra = list(out.questions), []
+    if mode.startswith("live"):
+        # The rule-based gap checks are deterministic; keep any gap the model did not ask about.
+        asked = {q.category for q in questions}
+        added = [q for q in h.detect_questions(state, systems) if q.category not in asked]
+        for i, q in enumerate(added, start=len(questions) + 1):
+            questions.append(q.model_copy(update={"id": f"Q{i}"}))
+        if added:
+            extra.append(Decision(agent="clarification", decision=f"Added {len(added)} rule-based questions for gaps the model did not raise"))
+    return {"questions": questions, "decisions": _log(state, out, "clarification", mode, extra),
             "completed_stages": _done(state, "clarification")}
 
 
@@ -97,13 +136,22 @@ def integration_agent(state: PipelineState) -> dict:
         for m, p in spec["endpoints"]
     ] if owner else []
     out, mode = run_agent(
-        "integration", f"Map source fields to target fields. {GUARD}", _context(state),
+        "integration", PROMPTS["integration"], _context(state),
         IntegrationOut, state.fixture,
         lambda: IntegrationOut(mappings=h.map_fields(state), decisions=[
             Decision(agent="integration", decision="Mapped fields by name, synonyms and similarity",
                      rationale="Only exact semantic matches are facts; the rest are assumptions to confirm")]),
     )
-    return {"systems": systems, "endpoints": endpoints, "mappings": out.mappings,
+    mappings = out.mappings
+    if mode.startswith("live"):
+        # The model may only map fields that exist; an unknown target becomes "?" and unknown.
+        src_fields, dst_fields = set(spec["fields"]), set(parse_sample(state.sample))
+        mappings = [
+            m if m.target_field in dst_fields
+            else m.model_copy(update={"target_field": "?", "confidence": 0.0, "provenance": Provenance.unknown, "source": None})
+            for m in mappings if m.source_field in src_fields
+        ]
+    return {"systems": systems, "endpoints": endpoints, "mappings": mappings,
             "decisions": _log(state, out, "integration", mode),
             "completed_stages": _done(state, "integration")}
 
@@ -137,10 +185,27 @@ def architecture_agent(state: PipelineState) -> dict:
         plan = h.build_plan(state.model_copy(update={"architecture": arch}))
         return ArchitectureOut(architecture=arch, plan=plan)
 
+    def problem(out: ArchitectureOut) -> str | None:
+        a = out.architecture
+        ids = {c.id for c in a.components}
+        names = {c.name.lower() for c in a.components}
+        if not any(c.layer == "integration" for c in a.components):
+            return "no integration-layer component"
+        if any(f.source not in ids or f.target not in ids for f in a.flows):
+            return "a flow references a missing component"
+        missing = [s.name for s in state.systems if s.name.lower() not in names]
+        if missing:
+            return f"systems missing from the architecture: {', '.join(missing)}"
+        plan_ids = {t.id for t in out.plan}
+        if not out.plan or any(d not in plan_ids for t in out.plan for d in t.depends_on) or _has_cycle(out.plan):
+            return "implementation plan is empty or has invalid dependencies"
+        return None
+
     out, mode = run_agent(
-        "architecture", f"Design the integration architecture and an implementation plan. {GUARD}",
-        _context(state) + f"\nSuggested pattern: {hits[0]['name'] if hits else 'none'}",
-        ArchitectureOut, state.fixture, offline,
+        "architecture", PROMPTS["architecture"],
+        _context(state) + f"\nSystems: {[s.name for s in state.systems]}"
+        + (f"\nClosest known pattern: {hits[0]['name']}: {hits[0]['summary']}" if hits else ""),
+        ArchitectureOut, state.fixture, offline, accept=problem,
     )
     arch = out.architecture
     arch.mermaid = to_mermaid(arch)
@@ -158,12 +223,24 @@ def architecture_agent(state: PipelineState) -> dict:
 
 def validation_agent(state: PipelineState) -> dict:
     out, mode = run_agent(
-        "validation", "Write test cases that cover every requirement, and a risk register.",
+        "validation", PROMPTS["validation"],
         _context(state) + "\nRequirements:\n" + "\n".join(f"{r.id}: {r.text}" for r in state.requirements),
         ValidationOut, state.fixture,
         lambda: ValidationOut(tests=h.build_tests(state), risks=h.build_risks(state)),
     )
-    return {"tests": out.tests, "risks": out.risks, "decisions": _log(state, out, "validation", mode),
+    tests, risks, extra = list(out.tests), list(out.risks), []
+    if mode.startswith("live"):
+        # A small model may leave requirements untested; fill each gap with an offline test.
+        covered = {rid for t in tests for rid in t.covers}
+        gaps = {r.id for r in state.requirements if r.provenance != Provenance.unknown and r.id not in covered}
+        added = [t for t in h.build_tests(state) if set(t.covers) & gaps]
+        for i, t in enumerate(added, start=len(tests) + 1):
+            tests.append(t.model_copy(update={"id": f"TC{i}"}))
+        if not risks:
+            risks = h.build_risks(state)
+        if added:
+            extra.append(Decision(agent="validation", decision=f"Added {len(added)} offline tests for requirements the model left untested"))
+    return {"tests": tests, "risks": risks, "decisions": _log(state, out, "validation", mode, extra),
             "completed_stages": _done(state, "validation")}
 
 

@@ -1,7 +1,9 @@
-# Local stack: PostgreSQL with pgvector, the API, and the built frontend.
+# Local stack: PostgreSQL with pgvector, Ollama (free local model), the API and the built frontend.
 #   docker compose up --build   ->   http://localhost:8080
-# The database password defaults to a local-only value; set POSTGRES_PASSWORD in
-# your shell or .env for anything beyond a laptop.
+# The first start downloads the model (qwen2.5:3b is about 1.9 GB) into the ollama volume.
+# Pick a smaller model with OLLAMA_MODEL=qwen2.5:1.5b, or run without a model:
+#   LLM_PROVIDER= docker compose up --build   (agents run offline)
+# The database password defaults to a local-only value; set POSTGRES_PASSWORD for anything beyond a laptop.
 services:
   db:
     image: pgvector/pgvector:pg16
@@ -16,6 +18,15 @@ services:
       interval: 5s
       retries: 10
 
+  ollama:
+    build:
+      context: .
+      dockerfile: infrastructure/ollama.Dockerfile
+    environment:
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:3b}
+    volumes:
+      - ollama:/root/.ollama
+
   backend:
     build:
       context: .
@@ -23,17 +34,21 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://deploymate:${POSTGRES_PASSWORD:-deploymate-local}@db:5432/deploymate
       CORS_ORIGINS: http://localhost:8080
-      LLM_API_KEY: ${LLM_API_KEY:-}
-      LLM_BASE_URL: ${LLM_BASE_URL:-https://openrouter.ai/api/v1}
-      LLM_MODEL: ${LLM_MODEL:-meta-llama/llama-3.3-70b-instruct:free}
+      LLM_PROVIDER: ${LLM_PROVIDER-ollama}
+      OLLAMA_URL: http://ollama:11434
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:3b}
     depends_on:
       db:
         condition: service_healthy
+      ollama:
+        condition: service_started
 
   frontend:
     build:
       context: .
       dockerfile: infrastructure/frontend.Dockerfile
+    environment:
+      BACKEND_URL: http://backend:8000
     ports:
       - "8080:80"
     depends_on:
@@ -42,3 +57,4 @@ services:
 
 volumes:
   pgdata:
+  ollama:

@@ -97,20 +97,30 @@ METRICS = ["requirement_precision", "requirement_recall", "missing_question_reca
            "architecture_valid", "test_coverage", "pattern_top1"]
 
 
-def main(write: bool = True, quiet: bool = False) -> dict:
-    saved = os.environ.pop("LLM_API_KEY", None)  # evaluate the offline agents deterministically
+def main(write: bool = True, quiet: bool = False, live: bool = False, limit: int | None = None) -> dict:
+    """Score the offline agents (default), or the configured live model with live=True."""
+    from ..agents.llm import live_enabled, model_name
+
+    if live and not live_enabled():
+        raise SystemExit("--live needs LLM_PROVIDER (or LLM_API_KEY) to be set")
+    saved = {} if live else {k: os.environ.pop(k) for k in ("LLM_API_KEY", "LLM_PROVIDER") if k in os.environ}
     try:
         cases = build_cases()
-        rows = [score_case(c) for c in cases]
-        critic = critic_cases(_run(cases[0]))
+        if limit:  # spread the sample across domains
+            cases = cases[:: max(1, len(cases) // limit)][:limit]
+        rows = []
+        for c in cases:
+            rows.append(score_case(c))
+            if not quiet and live:
+                print(f"  {c.id} done", flush=True)
+        critic = critic_cases(_run(build_cases()[0])) if not live else []
     finally:
-        if saved is not None:
-            os.environ["LLM_API_KEY"] = saved
+        os.environ.update(saved)
     report = {
-        "mode": "offline agents",
+        "mode": f"live model ({model_name()})" if live else "offline agents",
         "cases": len(rows),
         "summary": {m: round(mean(r[m] for r in rows), 3) for m in METRICS},
-        "critic_accuracy": round(mean(r["correct"] for r in critic), 3),
+        "critic_accuracy": round(mean(r["correct"] for r in critic), 3) if critic else None,
         "human_reviewer_score": None,
         "notes": "Synthetic cases were written alongside the offline agents, so scores are optimistic "
                  "for real briefs. Human reviewer score requires people and is not estimated.",
@@ -119,11 +129,18 @@ def main(write: bool = True, quiet: bool = False) -> dict:
     }
     if write:
         REPORT.parent.mkdir(exist_ok=True)
-        REPORT.write_text(json.dumps(report, indent=2), encoding="utf-8")
+        path = REPORT.with_name("eval_report_live.json") if live else REPORT
+        path.write_text(json.dumps(report, indent=2), encoding="utf-8")
     if not quiet:
         print(json.dumps({k: report[k] for k in ("cases", "summary", "critic_accuracy")}, indent=2))
     return report
 
 
 if __name__ == "__main__":
-    main()
+    import argparse
+
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--live", action="store_true", help="score the configured LLM instead of the offline agents")
+    ap.add_argument("--limit", type=int, help="number of cases to sample (live runs are slow)")
+    args = ap.parse_args()
+    main(live=args.live, limit=args.limit)

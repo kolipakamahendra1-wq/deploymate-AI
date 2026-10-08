@@ -1,13 +1,15 @@
 server {
-  listen 80;
+  listen ${PORT};
+  listen [::]:${PORT};
   root /usr/share/nginx/html;
 
   # API calls go to the backend; buffering off so pipeline progress streams live.
+  # Local models can take minutes per stage, hence the long read timeout.
   location /api/ {
-    proxy_pass http://backend:8000/;
+    proxy_pass ${BACKEND_URL}/;
     proxy_http_version 1.1;
     proxy_buffering off;
-    proxy_read_timeout 300s;
+    proxy_read_timeout 1800s;
   }
 
   location /assets/ {
