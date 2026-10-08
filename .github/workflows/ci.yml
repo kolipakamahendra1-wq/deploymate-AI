@@ -50,16 +50,23 @@ jobs:
   stack:
     needs: [backend, frontend]
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # CPU runners cannot serve the local model in reasonable time; the smoke test checks
+    # the wiring (nginx -> API -> Postgres/pgvector) with the offline agents instead.
+    env:
+      LLM_PROVIDER: ""
     steps:
       - uses: actions/checkout@v4
       - name: Build and start the compose stack (Postgres + pgvector, API, nginx)
-        run: docker compose up -d --build --wait
+        run: docker compose up -d --build --wait --wait-timeout 300
       - name: Smoke test through nginx
+        timeout-minutes: 5
         run: |
-          curl -fsS localhost:8080/ > /dev/null
-          curl -fsS localhost:8080/api/health
-          id=$(curl -fsS localhost:8080/api/demo | curl -fsS -H 'Content-Type: application/json' -d @- localhost:8080/api/customers | python3 -c 'import sys,json;print(json.load(sys.stdin)["id"])')
-          curl -fsS -X POST localhost:8080/api/customers/$id/run | grep -q finished
-          curl -fsS localhost:8080/api/customers/$id/patterns | grep -q webhook-queue
+          c="curl -fsS --max-time 120"
+          $c localhost:8080/ > /dev/null
+          $c localhost:8080/api/health
+          id=$($c localhost:8080/api/demo | $c -H 'Content-Type: application/json' -d @- localhost:8080/api/customers | python3 -c 'import sys,json;print(json.load(sys.stdin)["id"])')
+          $c -X POST localhost:8080/api/customers/$id/run | grep -q finished
+          $c localhost:8080/api/customers/$id/patterns | grep -q webhook-queue
       - if: always()
         run: docker compose logs --no-color | tail -100
