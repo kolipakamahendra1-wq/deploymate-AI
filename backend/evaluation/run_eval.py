@@ -1,72 +1,127 @@
-"""Small evaluation suite for the demo slice (PRD section 13, reduced to 5 cases).
+"""Evaluation suite (PRD section 13).
 
-Each case plants (or does not plant) a guardrail violation in the demo run and
-checks whether the critic catches it. We also score the demo run against a
-gold set of missing-question categories.
+Runs the full pipeline on 40 synthetic cases and measures:
+  requirement extraction precision and recall, missing-question recall,
+  mapping accuracy, architecture validity, test-case coverage and pattern
+  retrieval accuracy, plus critic accuracy on planted guardrail violations.
+The human reviewer score cannot be computed automatically and is reported as
+null rather than estimated.
+
+Cases run with the LLM disabled, so the numbers describe the offline agents.
 
 Run: python -m backend.evaluation.run_eval
 """
 from __future__ import annotations
 
 import json
+import os
+import re
 from pathlib import Path
+from statistics import mean
 
 from ..agents.graph import run_pipeline
 from ..agents.stages import critic_agent
 from ..schemas.models import Endpoint, FieldMapping, PipelineState, Provenance, Task
+from .cases import Case, build_cases
 
-DEMO = Path(__file__).resolve().parents[2] / "examples" / "demo_customer"
-GOLD_QUESTION_CATEGORIES = {"auth", "throughput", "sla", "data-ownership", "failure"}
+ROOT = Path(__file__).resolve().parents[2]
+REPORT = ROOT / "generated" / "eval_report.json"
+STRUCTURAL = ("missing", "cycle", "not in the architecture")
 
 
-def _demo_final() -> PipelineState:
-    state = PipelineState(
-        customer_id="eval",
-        brief=(DEMO / "brief.txt").read_text(encoding="utf-8"),
-        openapi=json.loads((DEMO / "order_platform.openapi.json").read_text(encoding="utf-8")),
-        sample=json.loads((DEMO / "fulfillment_sample.json").read_text(encoding="utf-8")),
-    )
-    final = state
-    for _, final in run_pipeline(state):
+def _words(s: str) -> set[str]:
+    return {w for w in re.findall(r"[a-z]+", s.lower()) if len(w) > 2 and w not in {"our", "the", "and", "are"}}
+
+
+def _matches(text: str, gold: str) -> bool:
+    g = _words(gold)
+    return bool(g) and len(_words(text) & g) / len(g) >= 0.6
+
+
+def _run(case: Case) -> PipelineState:
+    state = PipelineState(customer_id=case.id, brief=case.brief, openapi=case.openapi, sample=case.sample)
+    for _, state in run_pipeline(state):
         pass
-    return final
+    return state
 
 
-def _cases(base: PipelineState) -> list[tuple[str, PipelineState, bool]]:
-    """(name, mutated state, violation expected)."""
-    invented = base.model_copy(update={"endpoints": base.endpoints + [
-        Endpoint(system_id="fulfillment", method="POST", path="/shipments",
-                 provenance=Provenance.fact, source="openapi:POST /shipments")]})
-    bad_map = base.model_copy(update={"mappings": base.mappings + [
-        FieldMapping(source_field="loyalty_tier", target_field="priority", confidence=0.9,
-                     provenance=Provenance.fact, source="guess")]})
-    bad_dep = base.model_copy(update={"plan": base.plan + [
-        Task(id="T9", title="Go live", depends_on=["T42"])]})
-    untested = base.model_copy(update={"tests": [t for t in base.tests if "R2" not in t.covers]})
-    return [
-        ("clean demo run", base, False),
-        ("invented fulfillment endpoint", invented, True),
-        ("mapping fact on unknown field", bad_map, True),
-        ("task depends on missing task", bad_dep, True),
-        ("requirement without a test", untested, True),
-    ]
-
-
-def main() -> dict:
-    base = _demo_final()
-    rows = []
-    for name, state, expected in _cases(base):
-        found = bool(critic_agent(state)["critic_notes"])
-        rows.append({"case": name, "expected_violation": expected, "flagged": found, "correct": found == expected})
-    asked = {q.category for q in base.questions}
-    report = {
-        "critic_accuracy": sum(r["correct"] for r in rows) / len(rows),
-        "missing_question_recall": len(asked & GOLD_QUESTION_CATEGORIES) / len(GOLD_QUESTION_CATEGORIES),
-        "cases": rows,
+def score_case(case: Case) -> dict:
+    st = _run(case)
+    extracted = [r for r in st.requirements if r.kind == "functional" and r.provenance == Provenance.fact]
+    tp = [r for r in extracted if any(_matches(r.text, g) for g in case.gold_requirements)]
+    found_gold = [g for g in case.gold_requirements if any(_matches(r.text, g) for r in extracted)]
+    asked = {q.category for q in st.questions}
+    mapped = {m.source_field: (None if m.target_field == "?" else m.target_field) for m in st.mappings}
+    correct_maps = sum(mapped.get(src) == tgt for src, tgt in case.gold_mapping.items())
+    structural = [n for n in st.critic_notes if any(k in n.message for k in STRUCTURAL)]
+    known = [r for r in st.requirements if r.provenance != Provenance.unknown]
+    covered = {rid for t in st.tests for rid in t.covers}
+    return {
+        "case": case.id,
+        "name": case.name,
+        "requirement_precision": len(tp) / len(extracted) if extracted else 0.0,
+        "requirement_recall": len(found_gold) / len(case.gold_requirements),
+        "missing_question_recall": len(asked & case.gold_questions) / len(case.gold_questions),
+        "mapping_accuracy": correct_maps / len(case.gold_mapping),
+        "architecture_valid": 1.0 if not structural and st.architecture.components else 0.0,
+        "test_coverage": sum(r.id in covered for r in known) / len(known) if known else 1.0,
+        "pattern_top1": 1.0 if st.patterns and st.patterns[0].id == case.gold_pattern else 0.0,
+        "systems_detected": [s.name for s in st.systems],
     }
-    out = Path(__file__).resolve().parents[2] / "generated" / "eval_report.json"
-    out.write_text(json.dumps(report, indent=2), encoding="utf-8")
-    print(json.dumps(report, indent=2))
+
+
+def critic_cases(base: PipelineState) -> list[dict]:
+    """Planted violations: the critic should flag each mutated state and not the clean one."""
+    planted = [
+        ("clean run", base, False),
+        ("invented endpoint", base.model_copy(update={"endpoints": base.endpoints + [
+            Endpoint(system_id="x", method="POST", path="/refunds", provenance=Provenance.fact,
+                     source="openapi:POST /refunds")]}), True),
+        ("fact mapping on unknown field", base.model_copy(update={"mappings": base.mappings + [
+            FieldMapping(source_field="loyalty_tier", target_field="priority", confidence=0.9,
+                         provenance=Provenance.fact, source="guess")]}), True),
+        ("missing task dependency", base.model_copy(update={"plan": base.plan + [
+            Task(id="T99", title="Go live", depends_on=["T42"])]}), True),
+        ("dependency cycle", base.model_copy(update={"plan": base.plan + [
+            Task(id="TA", title="a", depends_on=["TB"]), Task(id="TB", title="b", depends_on=["TA"])]}), True),
+        ("requirement without a test", base.model_copy(update={"tests": []}), True),
+    ]
+    rows = []
+    for name, st, expected in planted:
+        flagged = bool(critic_agent(st)["critic_notes"])
+        rows.append({"case": name, "expected_violation": expected, "flagged": flagged, "correct": flagged == expected})
+    return rows
+
+
+METRICS = ["requirement_precision", "requirement_recall", "missing_question_recall", "mapping_accuracy",
+           "architecture_valid", "test_coverage", "pattern_top1"]
+
+
+def main(write: bool = True, quiet: bool = False) -> dict:
+    saved = os.environ.pop("LLM_API_KEY", None)  # evaluate the offline agents deterministically
+    try:
+        cases = build_cases()
+        rows = [score_case(c) for c in cases]
+        critic = critic_cases(_run(cases[0]))
+    finally:
+        if saved is not None:
+            os.environ["LLM_API_KEY"] = saved
+    report = {
+        "mode": "offline agents",
+        "cases": len(rows),
+        "summary": {m: round(mean(r[m] for r in rows), 3) for m in METRICS},
+        "critic_accuracy": round(mean(r["correct"] for r in critic), 3),
+        "human_reviewer_score": None,
+        "notes": "Synthetic cases were written alongside the offline agents, so scores are optimistic "
+                 "for real briefs. Human reviewer score requires people and is not estimated.",
+        "per_case": rows,
+        "critic_cases": critic,
+    }
+    if write:
+        REPORT.parent.mkdir(exist_ok=True)
+        REPORT.write_text(json.dumps(report, indent=2), encoding="utf-8")
+    if not quiet:
+        print(json.dumps({k: report[k] for k in ("cases", "summary", "critic_accuracy")}, indent=2))
     return report
 
 

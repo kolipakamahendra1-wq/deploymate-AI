@@ -1,17 +1,20 @@
-"""SQLite persistence. Every query is scoped by customer_id (data isolation)."""
+"""Persistence. Every query is scoped by customer_id (data isolation).
+
+Decisions are also written to an append-only `decision_log` table so the audit
+trail survives later re-runs that replace the pipeline state.
+"""
 from __future__ import annotations
 
-import os
 import uuid
 
-from sqlalchemy import Column, String, Text, create_engine
+from sqlalchemy import Column, Integer, String, Text, func, select
 from sqlalchemy.orm import Session, declarative_base
-from sqlalchemy.pool import StaticPool
 
+from .. import db
 from ..schemas.models import PipelineState
 
 Base = declarative_base()
-_engine = None
+_created = False
 
 
 class Customer(Base):
@@ -21,21 +24,30 @@ class Customer(Base):
     state_json = Column(Text, nullable=False)
 
 
+class DecisionLog(Base):
+    __tablename__ = "decision_log"
+    seq = Column(Integer, primary_key=True, autoincrement=True)
+    customer_id = Column(String, index=True, nullable=False)
+    run = Column(Integer, nullable=False)
+    agent = Column(String, nullable=False)
+    decision = Column(Text, nullable=False)
+    rationale = Column(Text, default="")
+    at = Column(String, nullable=False)
+
+
 def engine():
-    global _engine
-    if _engine is None:
-        url = os.getenv("DATABASE_URL", "sqlite:///deploymate.db")
-        kwargs = {"connect_args": {"check_same_thread": False}}
-        if ":memory:" in url:
-            kwargs["poolclass"] = StaticPool
-        _engine = create_engine(url, **kwargs)
-        Base.metadata.create_all(_engine)
-    return _engine
+    global _created
+    e = db.engine()
+    if not _created:
+        Base.metadata.create_all(e)
+        _created = True
+    return e
 
 
 def reset_engine():
-    global _engine
-    _engine = None
+    global _created
+    _created = False
+    db.reset_engine()
 
 
 def create_customer(name: str, state: PipelineState) -> str:
@@ -53,13 +65,32 @@ def load(cid: str) -> PipelineState | None:
         return PipelineState.model_validate_json(row.state_json) if row else None
 
 
-def save(state: PipelineState) -> None:
+def save(state: PipelineState, run: int | None = None) -> None:
+    """Persist state; when `run` is given, append decisions not yet logged for it."""
     with Session(engine()) as s:
         row = s.get(Customer, state.customer_id)
         row.state_json = state.model_dump_json()
+        if run is not None:
+            logged = s.scalar(select(func.count()).select_from(DecisionLog)
+                              .where(DecisionLog.customer_id == state.customer_id, DecisionLog.run == run)) or 0
+            for d in state.decisions[logged:]:
+                s.add(DecisionLog(customer_id=state.customer_id, run=run, agent=d.agent,
+                                  decision=d.decision, rationale=d.rationale, at=d.at))
         s.commit()
+
+
+def next_run(cid: str) -> int:
+    with Session(engine()) as s:
+        return (s.scalar(select(func.max(DecisionLog.run)).where(DecisionLog.customer_id == cid)) or 0) + 1
+
+
+def decision_log(cid: str) -> list[dict]:
+    with Session(engine()) as s:
+        rows = s.scalars(select(DecisionLog).where(DecisionLog.customer_id == cid).order_by(DecisionLog.seq))
+        return [{"run": r.run, "agent": r.agent, "decision": r.decision, "rationale": r.rationale, "at": r.at}
+                for r in rows]
 
 
 def list_customers() -> list[dict]:
     with Session(engine()) as s:
-        return [{"id": c.id, "name": c.name} for c in s.query(Customer).all()]
+        return [{"id": c.id, "name": c.name} for c in s.query(Customer).order_by(Customer.name).all()]

@@ -1,28 +1,146 @@
-{"architecture": {
- "components": [
-  {"id":"c1","name":"Order Platform","layer":"client","description":"Source of paid orders"},
-  {"id":"a1","name":"Webhook Receiver","layer":"api","description":"Verifies and accepts order-paid webhooks"},
-  {"id":"i1","name":"Queue + Mapper","layer":"integration","description":"Buffers spikes, transforms orders to shipments"},
-  {"id":"i2","name":"Fulfillment Adapter","layer":"integration","description":"Calls fulfillment API with retries"},
-  {"id":"d1","name":"Sync Ledger","layer":"data","description":"Idempotency keys and delivery status"},
-  {"id":"c2","name":"Fulfillment System","layer":"client","description":"Internal, API contract unknown"}
+{
+ "architecture": {
+  "components": [
+   {
+    "id": "c1",
+    "name": "Order Platform",
+    "layer": "client",
+    "description": "Source of paid orders"
+   },
+   {
+    "id": "a1",
+    "name": "Webhook Receiver",
+    "layer": "api",
+    "description": "Verifies and accepts order-paid webhooks"
+   },
+   {
+    "id": "i1",
+    "name": "Queue + Mapper",
+    "layer": "integration",
+    "description": "Buffers spikes, transforms orders to shipments"
+   },
+   {
+    "id": "i2",
+    "name": "Fulfillment Adapter",
+    "layer": "integration",
+    "description": "Calls fulfillment API with retries"
+   },
+   {
+    "id": "d1",
+    "name": "Sync Ledger",
+    "layer": "data",
+    "description": "Idempotency keys and delivery status"
+   },
+   {
+    "id": "c2",
+    "name": "Fulfillment System",
+    "layer": "client",
+    "description": "Internal, API contract unknown"
+   }
+  ],
+  "flows": [
+   {
+    "source": "c1",
+    "target": "a1",
+    "label": "order-paid webhook"
+   },
+   {
+    "source": "a1",
+    "target": "i1",
+    "label": "enqueue"
+   },
+   {
+    "source": "i1",
+    "target": "i2",
+    "label": "shipment payload"
+   },
+   {
+    "source": "i2",
+    "target": "c2",
+    "label": "create shipment"
+   },
+   {
+    "source": "i2",
+    "target": "d1",
+    "label": "record result"
+   },
+   {
+    "source": "i2",
+    "target": "c1",
+    "label": "status patch"
+   }
+  ],
+  "security_boundaries": [
+   {
+    "name": "Public edge",
+    "components": [
+     "a1"
+    ]
+   },
+   {
+    "name": "Internal network",
+    "components": [
+     "i1",
+     "i2",
+     "d1",
+     "c2"
+    ]
+   }
+  ]
+ },
+ "plan": [
+  {
+   "id": "T1",
+   "title": "Confirm fulfillment API contract and auth",
+   "depends_on": [],
+   "estimate_days": 2
+  },
+  {
+   "id": "T2",
+   "title": "Webhook receiver with signature check",
+   "depends_on": [],
+   "estimate_days": 2
+  },
+  {
+   "id": "T3",
+   "title": "Queue and idempotent sync ledger",
+   "depends_on": [
+    "T2"
+   ],
+   "estimate_days": 3
+  },
+  {
+   "id": "T4",
+   "title": "Field mapper order to shipment",
+   "depends_on": [
+    "T1"
+   ],
+   "estimate_days": 3
+  },
+  {
+   "id": "T5",
+   "title": "Fulfillment adapter with retry and dead-letter",
+   "depends_on": [
+    "T1",
+    "T3",
+    "T4"
+   ],
+   "estimate_days": 4
+  },
+  {
+   "id": "T6",
+   "title": "Tracking status patch back to order platform",
+   "depends_on": [
+    "T5"
+   ],
+   "estimate_days": 2
+  }
  ],
- "flows": [
-  {"source":"c1","target":"a1","label":"order-paid webhook"},
-  {"source":"a1","target":"i1","label":"enqueue"},
-  {"source":"i1","target":"i2","label":"shipment payload"},
-  {"source":"i2","target":"c2","label":"create shipment"},
-  {"source":"i2","target":"d1","label":"record result"},
-  {"source":"i2","target":"c1","label":"status patch"}
- ],
- "security_boundaries": ["Public edge: webhook receiver", "Internal network: fulfillment adapter and system"]
-},
-"plan": [
- {"id":"T1","title":"Confirm fulfillment API contract and auth","depends_on":[],"estimate_days":2},
- {"id":"T2","title":"Webhook receiver with signature check","depends_on":[],"estimate_days":2},
- {"id":"T3","title":"Queue and idempotent sync ledger","depends_on":["T2"],"estimate_days":3},
- {"id":"T4","title":"Field mapper order to shipment","depends_on":["T1"],"estimate_days":3},
- {"id":"T5","title":"Fulfillment adapter with retry and dead-letter","depends_on":["T1","T3","T4"],"estimate_days":4},
- {"id":"T6","title":"Tracking status patch back to order platform","depends_on":["T5"],"estimate_days":2}
-],
-"decisions":[{"agent":"architecture","decision":"Queue-based async integration","rationale":"Absorbs promotion spikes and isolates fulfillment outages"}]}
+ "decisions": [
+  {
+   "agent": "architecture",
+   "decision": "Queue-based async integration",
+   "rationale": "Absorbs promotion spikes and isolates fulfillment outages"
+  }
+ ]
+}

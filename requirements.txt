@@ -5,4 +5,6 @@ langgraph
 sqlalchemy
 httpx
 pyyaml
+psycopg[binary]
+pgvector
 pytest

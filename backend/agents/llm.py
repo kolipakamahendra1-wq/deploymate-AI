@@ -1,8 +1,11 @@
-"""LLM access: free hosted model when LLM_API_KEY is set, else offline cache replay.
+"""LLM access with a three-step fallback chain.
 
-The provider is any OpenAI-compatible endpoint (default: OpenRouter with a free
-model), configured through LLM_BASE_URL / LLM_MODEL. Any live failure falls
-back to the cached fixture so the demo always runs.
+1. live: a free hosted model via any OpenAI-compatible endpoint (default
+   OpenRouter), when LLM_API_KEY is set. Output is validated against the
+   agent's Pydantic schema.
+2. recorded: the demo customer's recorded outputs, used only for a state
+   whose `fixture` names them. Never used for other customers.
+3. offline: the rule-based heuristic agent.
 """
 from __future__ import annotations
 
@@ -10,12 +13,16 @@ import json
 import os
 import re
 from pathlib import Path
+from typing import Callable, TypeVar
 
 import httpx
+from pydantic import BaseModel, ValidationError
 
 ROOT = Path(__file__).resolve().parents[2]
-CACHE_DIR = Path(os.getenv("DEMO_CACHE_DIR", ROOT / "examples" / "demo_customer" / "cache"))
+FIXTURES = ROOT / "examples"
 DEFAULT_MODEL = "meta-llama/llama-3.3-70b-instruct:free"
+
+M = TypeVar("M", bound=BaseModel)
 
 
 def live_enabled() -> bool:
@@ -29,27 +36,38 @@ def _extract_json(text: str) -> dict:
     return json.loads(match.group(0))
 
 
-def complete_json(agent: str, system: str, user: str) -> tuple[dict, str]:
-    """Return (payload, mode) where mode is 'live' or 'cache'."""
+def _live(system: str, user: str, schema: type[BaseModel]) -> dict:
+    resp = httpx.post(
+        os.getenv("LLM_BASE_URL", "https://openrouter.ai/api/v1").rstrip("/") + "/chat/completions",
+        headers={"Authorization": f"Bearer {os.environ['LLM_API_KEY']}"},
+        json={
+            "model": os.getenv("LLM_MODEL", DEFAULT_MODEL),
+            "temperature": 0,
+            "messages": [
+                {"role": "system", "content": (
+                    f"{system}\nReply with one JSON object only, matching this JSON Schema:\n"
+                    f"{json.dumps(schema.model_json_schema())}")},
+                {"role": "user", "content": user},
+            ],
+        },
+        timeout=90,
+    )
+    resp.raise_for_status()
+    return _extract_json(resp.json()["choices"][0]["message"]["content"])
+
+
+def run_agent(
+    agent: str, system: str, user: str, schema: type[M], fixture: str | None,
+    offline: Callable[[], M],
+) -> tuple[M, str]:
+    """Return (validated output, mode) where mode is live, recorded or offline."""
     if live_enabled():
         try:
-            resp = httpx.post(
-                os.getenv("LLM_BASE_URL", "https://openrouter.ai/api/v1") + "/chat/completions",
-                headers={"Authorization": f"Bearer {os.environ['LLM_API_KEY']}"},
-                json={
-                    "model": os.getenv("LLM_MODEL", DEFAULT_MODEL),
-                    "messages": [
-                        {"role": "system", "content": system + "\nReply with a single JSON object only."},
-                        {"role": "user", "content": user},
-                    ],
-                },
-                timeout=60,
-            )
-            resp.raise_for_status()
-            return _extract_json(resp.json()["choices"][0]["message"]["content"]), "live"
-        except Exception:  # noqa: BLE001 - any failure degrades to the cache
-            pass
-    path = CACHE_DIR / f"{agent}.json"
-    if not path.exists():
-        raise RuntimeError(f"No LLM key set and no cached output for agent '{agent}'")
-    return json.loads(path.read_text(encoding="utf-8")), "cache"
+            return schema.model_validate(_live(system, user, schema)), "live"
+        except (httpx.HTTPError, ValueError, ValidationError, KeyError):
+            pass  # degrade to the next source
+    if fixture:
+        path = FIXTURES / fixture / "cache" / f"{agent}.json"
+        if path.exists():
+            return schema.model_validate_json(path.read_text(encoding="utf-8")), "recorded"
+    return offline(), "offline"

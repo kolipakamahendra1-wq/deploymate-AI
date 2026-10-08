@@ -76,11 +76,24 @@ class ArchFlow(BaseModel):
     label: str = ""
 
 
+class SecurityBoundary(BaseModel):
+    name: str
+    components: list[str] = []  # component ids inside the boundary
+
+
 class Architecture(BaseModel):
     components: list[ArchComponent] = []
     flows: list[ArchFlow] = []
-    security_boundaries: list[str] = []
+    security_boundaries: list[SecurityBoundary] = []
     mermaid: str = ""
+
+
+class PatternRef(BaseModel):
+    """An integration pattern from the built-in library, retrieved by similarity."""
+    id: str
+    name: str
+    summary: str
+    score: float
 
 
 class Task(BaseModel):
@@ -127,6 +140,10 @@ class PipelineState(BaseModel):
     brief: str
     openapi: dict | None = None
     sample: dict | list | None = None
+    # Name of a recorded-output fixture. Only the built-in demo customer has one;
+    # every other customer runs live or on the offline heuristic agents.
+    fixture: str | None = None
+    patterns: list[PatternRef] = []
     requirements: list[Requirement] = []
     questions: list[Question] = []
     systems: list[System] = []
