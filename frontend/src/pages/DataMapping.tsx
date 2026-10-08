@@ -1,0 +1,48 @@
+import { useApp } from "../store";
+import { Empty, Mono, PageTitle, Panel, ProvBadge } from "../components/ui/primitives";
+
+export default function DataMapping() {
+  const { data } = useApp();
+  if (!data.mapping.length) return <><PageTitle title="Data mapping" /><Empty what="mappings" /></>;
+  return (
+    <>
+      <PageTitle title="Data mapping" hint="Order platform field to fulfillment field. Low confidence rows need a human decision." />
+      <Panel className="overflow-x-auto p-0">
+        <table className="w-full text-left text-sm">
+          <caption className="sr-only">Field mappings with confidence</caption>
+          <thead className="border-b border-line bg-paper text-xs uppercase text-ink-soft">
+            <tr>
+              <th scope="col" className="p-3">Source field</th>
+              <th scope="col" className="p-3">Target field</th>
+              <th scope="col" className="p-3">Transform</th>
+              <th scope="col" className="p-3">Confidence</th>
+              <th scope="col" className="p-3">Provenance</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.mapping.map((m) => {
+              const pct = Math.round(m.confidence * 100);
+              const color = pct >= 80 ? "bg-fact" : pct >= 50 ? "bg-assume" : "bg-unknown";
+              return (
+                <tr key={m.source_field} className={`border-b border-line last:border-0 ${m.provenance === "unknown" ? "hatched" : ""}`}>
+                  <td className="p-3"><Mono>{m.source_field}</Mono></td>
+                  <td className="p-3"><Mono>{m.target_field}</Mono></td>
+                  <td className="p-3 text-ink-soft">{m.transform || "-"}</td>
+                  <td className="p-3">
+                    <div className="flex items-center gap-2">
+                      <div className="h-2 w-24 rounded bg-line" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100} aria-label={`Confidence ${pct}%`}>
+                        <div className={`h-2 rounded ${color}`} style={{ width: `${pct}%` }} />
+                      </div>
+                      <span className="tabular-nums">{pct}%</span>
+                    </div>
+                  </td>
+                  <td className="p-3"><ProvBadge p={m.provenance} source={m.source} /></td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </Panel>
+    </>
+  );
+}

@@ -1,0 +1,63 @@
+@import "tailwindcss";
+
+@theme {
+  --color-paper: #e9eef2;
+  --color-panel: #f7f9fa;
+  --color-ink: #16222c;
+  --color-ink-soft: #46555f;
+  --color-cobalt: #2b4eff;
+  --color-fact: #0e8a7d;
+  --color-assume: #c98a00;
+  --color-unknown: #8a97a1;
+  --color-line: #cfd8de;
+  --font-display: "Bricolage Grotesque", system-ui, sans-serif;
+  --font-body: "Public Sans", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-body);
+  /* drafting-paper grid */
+  background-image:
+    linear-gradient(to right, rgba(22, 34, 44, 0.04) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(22, 34, 44, 0.04) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--font-display);
+  letter-spacing: -0.01em;
+}
+
+.hatched {
+  background-image: repeating-linear-gradient(
+    45deg,
+    rgba(138, 151, 161, 0.35) 0 2px,
+    transparent 2px 7px
+  );
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-cobalt);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
